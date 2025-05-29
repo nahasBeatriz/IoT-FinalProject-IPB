@@ -13,15 +13,16 @@ const int potentiometer = A0;
 
 // Refill Logic Variables
 int volumeML = 0;
+int maxVolumeML = 0;
 bool mqttRefillRequested = false;
 bool autoRefillRequested = false;
 unsigned long lastRefillTime = 0;
 const unsigned long refillInterval = 300;
 const int refillStep = 1;
 unsigned long lastSensorRead = 0;
-const unsigned long sensorReadInterval = 3000;
+const unsigned long sensorReadInterval = 2000;
 unsigned long refillCooldownTime = 0;
-const unsigned long cooldownDuration = 10000;
+const unsigned long cooldownDuration = 5000;
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -82,7 +83,18 @@ void reconnect(){
 // Read Volume Sensor and check for auto refill
 void readVolumeSensor(){
   int rawValue = analogRead(potentiometer);
-  volumeML = map(rawValue, 0, 1023, 0, 100);
+  int currentVolume = map(rawValue, 0, 1023, 0, 100);
+
+  // Prevent manual increases
+  if (currentVolume > maxVolumeML) {
+    currentVolume = maxVolumeML;
+  }
+  volumeML = currentVolume;
+
+  // Allow decrease (simulate consumption)
+  if (volumeML < maxVolumeML) {
+    maxVolumeML = volumeML;
+  }
   Serial.print("Sensor volume: ");
   Serial.print(volumeML);
   Serial.println(" ml");
@@ -105,12 +117,14 @@ void gradualRefill(){
       volumeML += refillStep;
       if(volumeML > 100) volumeML = 100;
 
+      // Update maxVolumeML since refill is happening
+      maxVolumeML = volumeML;
+
       Serial.print("Refilling... ");
       Serial.print(volumeML);
       Serial.println(" ml");
 
       publishVolume();
-
       digitalWrite(led_pin, LOW);
     } else{
       Serial.println("Refill complete.");
@@ -148,14 +162,13 @@ void loop(){
   client.loop();
   unsigned long now = millis();
 
-  // Read sensor if not refilling and cooldown passed
   if((now - lastSensorRead >= sensorReadInterval) &&
       !mqttRefillRequested && !autoRefillRequested &&
       (now - refillCooldownTime >= cooldownDuration)){
     lastSensorRead = now;
     readVolumeSensor();
   }
-  // Handle refill
+
   if(mqttRefillRequested || autoRefillRequested){
     gradualRefill();
   }
